@@ -91,6 +91,62 @@ function Get-LookbackStart($Config) {
     return $since
 }
 
+# --- Ordnerstruktur ----------------------------------------------------------
+# Ordner, die NIE geprüft werden (Outlook-Standardnamen von Graph, sprach-
+# unabhängig). Unterordner dieser Ordner werden ebenfalls ausgeschlossen.
+$script:SkipWellKnown = @('sentitems', 'deleteditems', 'junkemail', 'drafts',
+                          'outbox', 'conversationhistory')
+
+# Baut eine Tabelle  Ordner-ID -> @{ Path = 'Inbox/Projekte'; Excluded = $true/$false }
+# für ALLE Mail-Ordner des Postfachs (rekursiv inkl. Unterordner).
+# Excluded = $true, wenn der Ordner selbst oder ein übergeordneter Ordner
+#   - ein Standardordner aus $SkipWellKnown ist oder
+#   - in config.json unter ignoreFolders steht (Name ODER Pfad, Groß/Klein egal).
+function Get-FolderMap($Config) {
+    $user = (Get-MgContext).Account
+    $map  = @{}
+
+    # IDs der Standardordner ermitteln. Fehlt einer, wird er übersprungen.
+    # Hashtable als Menge: schnelle Prüfung mit ContainsKey.
+    $skipIds = @{}
+    foreach ($wk in $SkipWellKnown) {
+        try { $skipIds[(Get-MgUserMailFolder -UserId $user -MailFolderId $wk -Property id -ErrorAction Stop).Id] = $true } catch { }
+    }
+
+    # Ignorierliste einmal in Kleinbuchstaben umwandeln (schneller Vergleich).
+    $ignore = @{}
+    foreach ($i in @($Config.ignoreFolders)) { if ($i) { $ignore["$i".ToLower().Trim('/')] = $true } }
+
+    # Rekursive Hilfsfunktion: verarbeitet eine Ordnerebene und steigt in
+    # Unterordner ab. $parentExcluded vererbt den Ausschluss nach unten.
+    function Add-Level($folders, [string]$parentPath, [bool]$parentExcluded) {
+        foreach ($f in $folders) {
+            # Pfad wie im Outlook-Ordnerbaum, getrennt mit '/'.
+            $path = if ($parentPath) { "$parentPath/$($f.DisplayName)" } else { $f.DisplayName }
+            # Ausgeschlossen, wenn Elternordner, Standardordner, Name oder Pfad passt.
+            $excl = $parentExcluded -or $skipIds.ContainsKey($f.Id) -or
+                    $ignore.ContainsKey("$($f.DisplayName)".ToLower()) -or $ignore.ContainsKey($path.ToLower())
+            $map[$f.Id] = @{ Path = $path; Excluded = $excl }
+            # Nur nachfragen, wenn es Unterordner gibt (spart Graph-Aufrufe).
+            if ($f.ChildFolderCount -gt 0) {
+                $kids = Get-MgUserMailFolderChildFolder -UserId $user -MailFolderId $f.Id -All `
+                        -Property 'id,displayName,childFolderCount' -ErrorAction Stop
+                Add-Level $kids $path $excl
+            }
+        }
+    }
+
+    # Oberste Ebene holen (Posteingang, Archiv, eigene Ordner …) und loslegen.
+    # -All: alle Seiten laden. Nur benötigte Felder, um Zeit zu sparen.
+    $top = Get-MgUserMailFolder -UserId $user -All -Property 'id,displayName,childFolderCount' -ErrorAction Stop
+    Add-Level $top '' $false
+
+    # Zusammenfassung ins Log, hilft beim Prüfen der Ignorierliste.
+    $n = @($map.Values | Where-Object { -not $_.Excluded }).Count
+    Write-Log "Ordner: $($map.Count) gesamt, $n werden geprüft."
+    return $map
+}
+
 # --- Anmeldung bei Microsoft Graph ------------------------------------------
 # -ContextScope CurrentUser speichert das Token im Benutzer-Cache, damit es
 # nach einem Neustart wiederverwendet werden kann. Ist das Token gültig, kehrt

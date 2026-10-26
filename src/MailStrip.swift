@@ -15,7 +15,7 @@
 //   hat keinen Zugriff auf Mails oder Microsoft Graph.
 //
 // Menü (Symbol in der Menüleiste):
-//   - Liste aller auslösenden Mails (Betreff, Absender, Datum, Grund)
+//   - Liste aller auslösenden Mails (Betreff, Absender, Datum, Ordner, Grund)
 //   - Klick auf eine Mail öffnet sie in Outlook im Web
 //   - ⌥ Option gedrückt halten: einzelne Mail quittieren
 //   - "Alarm löschen": alle aktuellen Mails quittieren
@@ -84,6 +84,7 @@ struct MailItem: Codable {
     let received: String?   // ISO-8601 in UTC, z. B. 2026-10-26T13:42:13Z
     let webLink: String?    // Link zu Outlook im Web
     let reason: String?     // warum diese Mail ausgelöst hat
+    let folder: String?     // Ordnerpfad, z. B. "Inbox/Projekte"
 }
 
 // Gesamter Inhalt von state.json. Ist die Liste leer, gibt es keinen Balken.
@@ -363,7 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 open.representedObject = it.webLink
                 open.attributedTitle = itemTitle(it)
                 // Tooltip (Maus kurz stehen lassen) zeigt Adresse und Grund vollständig.
-                open.toolTip = "\(it.address ?? "")\nGrund: \(it.reason ?? "-")"
+                open.toolTip = "\(it.address ?? "")\nOrdner: \(it.folder ?? "-")\nGrund: \(it.reason ?? "-")"
                 open.indentationLevel = 1
                 menu.addItem(open)
 
@@ -402,7 +403,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Zeilenumbruch im Titel erzeugt einen zweizeiligen Menüeintrag.
         let t = NSMutableAttributedString(string: short(it.subject, 70),
                                           attributes: [.font: NSFont.boldSystemFont(ofSize: 13)])
-        let sub = "\n\(it.name ?? it.address ?? "?")  ·  \(formatDate(it.received))  ·  \(it.reason ?? "")"
+        // Ordner nur zeigen, wenn es nicht der Posteingang ist (spart Platz).
+        let f = it.folder ?? ""
+        let folderPart = (f.isEmpty || ["inbox", "posteingang"].contains(f.lowercased())) ? "" : "  ·  📁 \(f)"
+        let sub = "\n\(it.name ?? it.address ?? "?")  ·  \(formatDate(it.received))\(folderPart)  ·  \(it.reason ?? "")"
         t.append(NSAttributedString(string: sub, attributes: [.font: NSFont.systemFont(ofSize: 11),
                                                               .foregroundColor: NSColor.secondaryLabelColor]))
         return t

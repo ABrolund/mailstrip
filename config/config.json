@@ -30,6 +30,8 @@
     "Thursday",
     "Friday"
   ],
+  "ignoreFolders": [],
+  "folderMapRefreshMinutes": 15,
   "managerListRefreshDays": 7,
   "managerChainMaxLevels": 10
 }

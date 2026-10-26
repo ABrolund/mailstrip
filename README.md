@@ -12,6 +12,7 @@ Ein langsam pulsierender Farbstreifen am oberen Bildschirmrand (macOS). Er ersch
 - **Mehrere Kategorien gleichzeitig:** Die Farben wechseln nacheinander, ein Puls je Farbe (z. B. rot → gelb → grün → rot …).
 - **Geschwindigkeit:** immer langsam (3 s pro Puls).
 - **Zeitraum:** nur Mails der letzten 24 Arbeitsstunden; am Wochenende wird nicht geprüft.
+- **Ordner:** alle Ordner inkl. Unterordner – außer Gesendet, Gelöscht, Junk, Entwürfe, Postausgang und Ordnern aus `ignoreFolders`.
 - **Ende des Alarms:** Mail lesen (spätestens nach 60 s weg) **oder** im Menü quittieren.
 
 ## Menüleiste
@@ -20,7 +21,7 @@ Das Symbol zeigt farbige Punkte je Kategorie und die Anzahl, z. B. `●● 3`. O
 
 Das Menü enthält:
 
-- **Liste der auslösenden Mails**, gruppiert nach Kategorie: Betreff, Absender, Datum und **Grund** (z. B. `Titel: Senior Director …`, `Linie Ebene 2: EVP …`, `Kunden-Domain philips.com`).
+- **Liste der auslösenden Mails**, gruppiert nach Kategorie: Betreff, Absender, Datum, Ordner (falls nicht Posteingang) und **Grund** (z. B. `Titel: Senior Director …`, `Linie Ebene 2: EVP …`, `Kunden-Domain philips.com`).
 - **Klick auf eine Mail:** öffnet sie in Outlook im Web.
 - **⌥ Option gedrückt halten:** Einträge werden zu „Quittieren: …“, damit lässt sich eine einzelne Mail quittieren.
 - **Alarm löschen (alle quittieren):** blendet alle aktuellen Mails aus. Neue Mails lösen wieder Alarm aus.
@@ -55,10 +56,13 @@ Das Menü enthält:
 | `scripts/MailStrip-Checker.ps1` | Hintergrunddienst: prüft alle 60 s den Posteingang |
 | `scripts/Login.ps1` | Interaktive Anmeldung + Aktualisierung der Managerliste |
 | `config/config.json` | Vorlage der Einstellungen |
-| `install.sh` | Komplette Einrichtung inkl. Autostart |
+| `install.sh` | Prüft/installiert Voraussetzungen, komplette Einrichtung inkl. Autostart |
+| `INSTALL.md` | Installationsanleitung |
 | `uninstall.sh` | Entfernt Autostart und optional alle Daten |
 
 ## Installation / Update
+
+Ausführliche Schritt-für-Schritt-Anleitung: **[INSTALL.md](INSTALL.md)**
 
 Voraussetzungen: Xcode Command Line Tools (`swiftc`) und PowerShell (`pwsh`). **Keine Admin-Rechte nötig.**
 
@@ -82,6 +86,8 @@ Datei: `~/Library/Application Support/MailStrip/config.json`. Änderungen wirken
 | `extraManagementAddresses` | Zusätzliche Adressen, die immer rot sind. |
 | `intervalSeconds` | Prüfintervall (Standard 60). |
 | `lookbackHours` | Nur ungelesene Mails der letzten N **Arbeitsstunden** zählen (Standard 24). Wochenenden werden übersprungen: Montag 9:00 prüft ab Freitag 9:00. |
+| `ignoreFolders` | Ordner, die nicht geprüft werden. Ordnername (`"Newsletter"`) oder Pfad (`"Inbox/Jira"`); Unterordner werden mit ignoriert. Groß/Klein egal. |
+| `folderMapRefreshMinutes` | Wie oft die Ordnerstruktur neu geladen wird (Standard 15). Neue Ordner werden zusätzlich sofort erkannt. |
 | `workDays` | Tage, an denen geprüft wird (englische Namen, Standard Mo–Fr). An anderen Tagen gibt es keinen Balken. |
 | `managerListRefreshDays` | Managerliste wird nach N Tagen neu geladen (Standard 7). |
 | `managerChainMaxLevels` | Maximale Ebenen nach oben in deiner Linie. |
@@ -107,12 +113,13 @@ Datei: `~/Library/Application Support/MailStrip/config.json`. Änderungen wirken
 - **`Write-StripStatus`**: schreibt `state.json` atomar (tmp-Datei + Umbenennen).
 - **`Connect-MailStrip`**: Anmeldung mit `Mail.Read` und `User.Read.All`. Das Token wird im Benutzer-Cache gespeichert (`-ContextScope CurrentUser`).
 - **`Update-ManagerList`**: holt deine Kette nach oben (Abbruch an der Spitze, weil der CEO sein eigener Manager ist) und alle internen Konten mit passendem Jobtitel. Speichert alles in `management.json`.
+- **`Get-FolderMap`**: lädt den kompletten Ordnerbaum rekursiv und markiert ausgeschlossene Ordner (Standardordner + `ignoreFolders`, vererbt an Unterordner).
 - **`Test-WorkDay` / `Get-LookbackStart`**: Arbeitstag prüfen und Beginn des Prüfzeitraums berechnen (Stunden an freien Tagen zählen nicht).
 - **`Read-ManagerList`**: liefert den Line Manager und ein Wörterbuch *Adresse → Grund* für Rot.
 
 ### Checker (`scripts/MailStrip-Checker.ps1`)
 
-- **`Get-InboxItems`**: lädt ungelesene Mails der letzten 24 Arbeitsstunden (`Get-LookbackStart`) (nur `id`, `from`, `subject`, `receivedDateTime`, `webLink`) und ordnet jede einer Kategorie mit Grund zu. Nicht relevante Mails werden verworfen.
+- **`Get-InboxItems`**: lädt mit **einem** Aufruf (`/me/messages`) alle ungelesenen Mails der letzten 24 Arbeitsstunden aus allen Ordnern (nur `id`, `from`, `subject`, `receivedDateTime`, `webLink`, `parentFolderId`). Mails in ausgeschlossenen Ordnern werden verworfen, die übrigen einer Kategorie mit Grund und Ordner zugeordnet.
 - **Hauptschleife**: an freien Tagen leere Liste schreiben und pausieren, sonst anmelden → Managerliste ggf. aktualisieren → prüfen → `state.json` → 60 s warten. Bei Änderungen wird jeder Treffer mit Grund geloggt. Kurzzeitige Fehler lassen den letzten Stand stehen.
 
 ### Autostart (`install.sh`)
@@ -135,7 +142,6 @@ Datei: `~/Library/Application Support/MailStrip/config.json`. Änderungen wirken
 
 ## Bekannte Grenzen
 
-- Geprüft wird nur der **Posteingang**. Mails, die Regeln in Unterordner verschieben, werden nicht erkannt.
 - Mails öffnen sich in **Outlook im Web**, nicht in der Outlook-App.
 - Bei weitergeleiteten Mails zählt die weiterleitende Person als Absender.
 - Wie lange das Token gültig bleibt, hängt von den Cerence-Richtlinien ab.
