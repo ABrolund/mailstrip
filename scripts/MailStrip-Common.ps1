@@ -3,8 +3,8 @@
 # -----------------------------------------------------------------------------
 # Gemeinsame Funktionen für Checker und Login. Wird per Dot-Sourcing geladen:
 #     . (Join-Path $PSScriptRoot 'MailStrip-Common.ps1')
-# Enthält: Pfade, Logging, Status schreiben, Config lesen, Graph-Anmeldung,
-#          Managerliste laden/aktualisieren.
+# Enthält: Pfade, Logging, Status schreiben, Config lesen, Arbeitstage,
+#          Ordnerstruktur, Graph-Anmeldung, Managerliste.
 # =============================================================================
 
 # --- Pfade -------------------------------------------------------------------
@@ -29,18 +29,18 @@ function Write-Log([string]$Message) {
 }
 
 # --- Zeit als ISO-8601 in UTC -------------------------------------------------
-# Format, das die Swift-App (ISO8601DateFormatter) direkt versteht.
+# Format, das die Swift-App (ISO8601DateFormatter) und Graph-Filter verstehen.
 function ConvertTo-IsoUtc($Date) {
     if (-not $Date) { return '' }
     return ([datetime]$Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
 }
 
 # --- Status für den Balken schreiben -----------------------------------------
+# Format siehe StatusFile/MailItem in MailStrip.swift.
 # $Status: 'ok' (Prüfung erfolgreich) oder 'auth' (Anmeldung nötig).
 # $Items:  Liste der auslösenden Mails (leer = kein Balken).
 # Erst in eine temporäre Datei, dann umbenennen -> die App liest nie eine
 # halb geschriebene Datei.
-# Format siehe StatusFile/MailItem in MailStrip.swift.
 function Write-StripStatus([string]$Status, $Items, [string]$Message = '') {
     if ($null -eq $Items) { $Items = @() }   # @($null) wäre ein Array mit einem Element
     $obj = [ordered]@{
@@ -184,7 +184,7 @@ function Update-ManagerList($Config) {
 
     # (1) Kette nach oben. Abbruch an der Spitze: Der CEO ist im Verzeichnis
     #     sein eigener Manager, sonst gäbe es eine Endlosschleife.
-    # $seen merkt sich bereits besuchte Personen (Schutz vor Schleifen).
+    #     $seen merkt sich bereits besuchte Personen (Schutz vor Schleifen).
     $chain = @()
     $seen  = @{ $me.Id = $true }
     $id    = $me.Id

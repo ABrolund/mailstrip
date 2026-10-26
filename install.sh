@@ -11,7 +11,7 @@
 #   5. alte Instanzen stoppen
 #   6. Dateien nach ~/Library/Application Support/MailStrip kopieren
 #   7. Swift-App bauen
-#   8. bei Microsoft anmelden + Managerliste holen
+#   8. Anmeldung – nur wenn kein gültiges Token im Cache liegt
 #   9. zwei LaunchAgents anlegen -> Start automatisch nach jedem Login/Reboot
 # Kann etwas nicht automatisch erledigt werden, erscheint ein Hilfetext mit
 # den nächsten Schritten und das Skript bricht ab.
@@ -20,7 +20,7 @@
 # Hinweis: -e bricht bei Fehlern ab, -u bei unbekannten Variablen,
 # pipefail meldet Fehler auch mitten in einer Pipe (a | b).
 # Befehle mit '|| …' werden bewusst abgefangen und brechen NICHT ab.
-set -euo pipefail   # bei jedem unerwarteten Fehler abbrechen
+set -euo pipefail
 
 # --- Pfade und Namen ---------------------------------------------------------
 # REPO_DIR: von hier werden Quellen gelesen (dein Git-Checkout).
@@ -76,10 +76,10 @@ ok "macOS $(sw_vers -productVersion), Prozessor $ARCH"
 # ist eine Sperre egal. Bei Bedarf greift später der passende Hilfetext.
 step "Prüfe Internetverbindung"
 # Ergebnisse merken (1 = erreichbar), werden später für Hinweise genutzt.
-NET_GITHUB=1; NET_GALLERY=1; NET_MS=1
-reachable "https://github.com"                 && ok "github.com"            || { NET_GITHUB=0;  warn "github.com nicht erreichbar"; }
-reachable "https://www.powershellgallery.com"  && ok "powershellgallery.com" || { NET_GALLERY=0; warn "powershellgallery.com nicht erreichbar"; }
-reachable "https://login.microsoftonline.com"  && ok "Microsoft-Anmeldung"   || { NET_MS=0;      warn "login.microsoftonline.com nicht erreichbar"; }
+NET_GITHUB=1; NET_MS=1
+reachable "https://github.com"                 && ok "github.com"            || { NET_GITHUB=0; warn "github.com nicht erreichbar"; }
+reachable "https://www.powershellgallery.com"  && ok "powershellgallery.com" || warn "powershellgallery.com nicht erreichbar"
+reachable "https://login.microsoftonline.com"  && ok "Microsoft-Anmeldung"   || { NET_MS=0;     warn "login.microsoftonline.com nicht erreichbar"; }
 
 # --- 2. Xcode Command Line Tools ---------------------------------------------
 # Liefern swiftc. /usr/bin/swiftc existiert immer als Platzhalter, daher
@@ -114,10 +114,19 @@ fi
 step "Prüfe PowerShell (pwsh)"
 # Bekannte Orte durchsuchen; erster Treffer gewinnt.
 # Gibt den Pfad auf stdout aus, Exit-Code 0 = gefunden.
-# Jeder Kandidat wird kurz gestartet, um kaputte Installationen auszuschließen.
+# Reihenfolge: feste Symlinks zuerst (/opt/homebrew/bin/pwsh zeigt auf
+# Homebrews Start-Skript, das DOTNET_ROOT setzt). Pfade in .../libexec/
+# sind das nackte Programm OHNE dieses Skript -> werden übersprungen.
+# Jeder Kandidat wird in einer LEEREN Umgebung (env -i) gestartet – genau
+# so, wie launchd und Login.command ihn später aufrufen. Was nur im
+# Terminal funktioniert (z. B. wegen ~/.zshrc), fällt hier durch.
 find_pwsh() {
-  for p in "$(command -v pwsh 2>/dev/null || true)" /usr/local/bin/pwsh /opt/homebrew/bin/pwsh "$LOCAL_BIN/pwsh"; do
-    [ -n "$p" ] && [ -x "$p" ] && "$p" -NoLogo -NoProfile -Command 'exit 0' >/dev/null 2>&1 && { echo "$p"; return 0; }
+  for p in /opt/homebrew/bin/pwsh /usr/local/bin/pwsh "$LOCAL_BIN/pwsh" "$(command -v pwsh 2>/dev/null || true)"; do
+    [ -n "$p" ] && [ -x "$p" ] || continue
+    case "$p" in */libexec/*) continue ;; esac
+    env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$p" -NoLogo -NoProfile -Command 'exit 0' >/dev/null 2>&1 \
+      && { echo "$p"; return 0; }
+    warn "$p startet ohne Terminal-Umgebung nicht – übersprungen" >&2
   done
   return 1
 }
@@ -128,8 +137,8 @@ install_pwsh() {
   # Prozessorname von macOS auf PowerShell-Namen abbilden.
   local arch="arm64"; [ "$ARCH" = "x86_64" ] && arch="x64"
   # Neueste Version über die GitHub-API ermitteln ("tag_name": "v7.x.y").
-  local ver
   # '|| true' verhindert den Abbruch durch set -e, wenn GitHub nicht antwortet.
+  local ver
   ver="$(curl -fsSL --max-time 20 https://api.github.com/repos/PowerShell/PowerShell/releases/latest 2>/dev/null \
          | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/' || true)"
   [ -n "$ver" ] || { warn "Version nicht ermittelbar – nutze $PS_FALLBACK_VERSION"; ver="$PS_FALLBACK_VERSION"; }
@@ -210,8 +219,8 @@ fi
 
 # --- 5. Alte Instanzen stoppen -----------------------------------------------
 step "Stoppe laufende MailStrip-Prozesse"
-# bootout = Dienst entladen. Fehler ignorieren, falls noch nicht installiert.
 # Wichtig vor dem Kopieren: laufende Programme halten Dateien offen.
+# bootout = Dienst entladen. Fehler ignorieren, falls noch nicht installiert.
 launchctl bootout "$GUI/$LABEL_STRIP" 2>/dev/null || true
 launchctl bootout "$GUI/$LABEL_CHECK" 2>/dev/null || true
 # Auch Prozesse beenden, die nicht über launchd laufen (z. B. manueller Test).
@@ -253,7 +262,6 @@ else
 fi
 
 # Login.command: Menüeintrag öffnet damit ein Terminal zur Anmeldung.
-# Der pwsh-Pfad wird beim Installieren fest eingetragen.
 # Variablen in diesem Heredoc werden JETZT eingesetzt (kein 'CMD' in Anführungszeichen).
 cat > "$APP_DIR/Login.command" <<CMD
 #!/bin/bash
@@ -275,25 +283,50 @@ swiftc -O "$REPO_DIR/src/MailStrip.swift" -o "$APP_DIR/MailStrip" || die_help "B
 xattr -dr com.apple.quarantine "$APP_DIR" 2>/dev/null || true
 ok "gebaut: $APP_DIR/MailStrip"
 
-# --- 8. Anmelden -------------------------------------------------------------
+# --- 8. Anmelden (nur wenn nötig) --------------------------------------------
 step "Anmeldung bei Microsoft Graph"
 [ "$NET_MS" = 1 ] || warn "Microsoft-Anmeldung war nicht erreichbar – Versuch trotzdem"
-# Öffnet den Device-Code-Dialog. Token wird im Benutzer-Cache gespeichert.
-"$PWSH" -NoLogo -NoProfile -File "$APP_DIR/Login.ps1" || die_help "Anmeldung fehlgeschlagen" \
+
+# Prüft, ob im Benutzer-Cache noch ein gültiges Token mit beiden Rechten liegt.
+# Läuft als Hintergrund-Job mit 30 s Zeitlimit: Ist KEIN Token vorhanden,
+# würde Connect-MgGraph sonst auf eine Device-Code-Eingabe warten und hängen.
+# Exit-Code 0 = gültig, 1 = Anmeldung nötig.
+token_ok() {
+  "$PWSH" -NoLogo -NoProfile -Command '
+    $job = Start-Job {
+      Connect-MgGraph -Scopes Mail.Read,User.Read.All -ContextScope CurrentUser `
+                      -UseDeviceAuthentication -NoWelcome -ErrorAction Stop *> $null
+      $c = Get-MgContext
+      [bool]($c -and $c.Scopes -contains "Mail.Read" -and $c.Scopes -contains "User.Read.All")
+    }
+    # Wartet höchstens 30 s; danach gilt: nicht angemeldet.
+    $done = Wait-Job $job -Timeout 30
+    $ok   = $done -and ((Receive-Job $job -ErrorAction SilentlyContinue) -contains $true)
+    Remove-Job $job -Force
+    if ($ok) { exit 0 } else { exit 1 }' >/dev/null 2>&1
+}
+
+# Gültiges Token aus dem Cache? Dann keine neue Anmeldung nötig.
+if token_ok; then
+  ok "bereits angemeldet – überspringe Anmeldung"
+else
+  # Öffnet den Device-Code-Dialog. Token wird im Benutzer-Cache gespeichert.
+  "$PWSH" -NoLogo -NoProfile -File "$APP_DIR/Login.ps1" || die_help "Anmeldung fehlgeschlagen" \
 "Möglichkeiten:
   - 'Admin approval required' / 'Need admin approval': Die Berechtigungen
     Mail.Read und User.Read.All müssen von der IT freigegeben werden.
   - 'User canceled authentication': Im Browser den Code eingeben und
     die Anmeldung bis 'Authentication complete' abschließen.
   - Netzwerkfehler: Zscaler/VPN prüfen."
+fi
 
 # --- 9. LaunchAgents ---------------------------------------------------------
 step "Richte Autostart ein"
 
 # Plist = Konfigurationsdatei für launchd (Apples Dienst-Manager).
+# Die Datei liegt in ~/Library/LaunchAgents -> gilt nur für diesen Benutzer.
 # Balken: startet beim Login. KeepAlive nur bei Absturz – "MailStrip beenden"
 # im Menü (normales Ende) wird respektiert bis zum nächsten Login.
-# Die Datei liegt in ~/Library/LaunchAgents -> gilt nur für diesen Benutzer.
 cat > "$AGENT_DIR/$LABEL_STRIP.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

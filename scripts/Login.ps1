@@ -1,8 +1,9 @@
 # =============================================================================
 # Login.ps1
 # -----------------------------------------------------------------------------
-# Interaktive Anmeldung (Device-Code). Wird vom Installer und über das Menü
-# "Anmelden bei Microsoft …" (Login.command) aufgerufen.
+# Interaktive Anmeldung (Device-Code). Wird vom Installer (nur wenn kein
+# gültiges Token vorhanden ist) und über das Menü "Anmelden bei Microsoft …"
+# (Login.command) aufgerufen.
 # Danach wird die Managerliste geholt und der Checker neu gestartet, damit
 # er das frische Token sofort verwendet.
 # =============================================================================
