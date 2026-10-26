@@ -39,7 +39,7 @@ Das Repo ist privat: als Passwort einen **Personal Access Token** eingeben.
 
 ```bash
 mkdir -p ~/Documents/Sources
-unzip -o ~/Downloads/mailstrip-v7.zip -d ~/Documents/Sources/
+unzip -o ~/Downloads/mailstrip-v6.zip -d ~/Documents/Sources/
 cd ~/Documents/Sources/mailstrip
 ```
 
@@ -120,7 +120,6 @@ Optional heruntergeladenes PowerShell entfernen: `rm -rf ~/.local/share/powershe
 | `Graph-Module konnten nicht installiert werden` | IT um Freigabe von `www.powershellgallery.com` bitten |
 | `Admin approval required` bei der Anmeldung | Rechte müssen von der IT freigegeben werden |
 | Installer fragt trotz gültiger Anmeldung erneut | Token im Cache nicht wiederverwendbar → einfach erneut anmelden |
-| `You must install .NET to run this application` | Es wurde eine PowerShell ohne .NET-Pfad eingetragen → `./install.sh` erneut ausführen (ab v7 wird jede PowerShell wie im Hintergrund getestet) |
 | `⚠︎ Anmeldung nötig` in der Menüleiste | Menü → **Anmelden bei Microsoft …** |
 | `⚠︎ Letzte Prüfung …` | `tail -50 ~/Library/Logs/MailStrip/checker.log` |
 | Terminal fragt nach Zugriff auf „Dokumente“ | **Erlauben** klicken |

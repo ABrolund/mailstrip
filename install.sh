@@ -114,19 +114,10 @@ fi
 step "Prüfe PowerShell (pwsh)"
 # Bekannte Orte durchsuchen; erster Treffer gewinnt.
 # Gibt den Pfad auf stdout aus, Exit-Code 0 = gefunden.
-# Reihenfolge: feste Symlinks zuerst (/opt/homebrew/bin/pwsh zeigt auf
-# Homebrews Start-Skript, das DOTNET_ROOT setzt). Pfade in .../libexec/
-# sind das nackte Programm OHNE dieses Skript -> werden übersprungen.
-# Jeder Kandidat wird in einer LEEREN Umgebung (env -i) gestartet – genau
-# so, wie launchd und Login.command ihn später aufrufen. Was nur im
-# Terminal funktioniert (z. B. wegen ~/.zshrc), fällt hier durch.
+# Jeder Kandidat wird kurz gestartet, um kaputte Installationen auszuschließen.
 find_pwsh() {
-  for p in /opt/homebrew/bin/pwsh /usr/local/bin/pwsh "$LOCAL_BIN/pwsh" "$(command -v pwsh 2>/dev/null || true)"; do
-    [ -n "$p" ] && [ -x "$p" ] || continue
-    case "$p" in */libexec/*) continue ;; esac
-    env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$p" -NoLogo -NoProfile -Command 'exit 0' >/dev/null 2>&1 \
-      && { echo "$p"; return 0; }
-    warn "$p startet ohne Terminal-Umgebung nicht – übersprungen" >&2
+  for p in "$(command -v pwsh 2>/dev/null || true)" /usr/local/bin/pwsh /opt/homebrew/bin/pwsh "$LOCAL_BIN/pwsh"; do
+    [ -n "$p" ] && [ -x "$p" ] && "$p" -NoLogo -NoProfile -Command 'exit 0' >/dev/null 2>&1 && { echo "$p"; return 0; }
   done
   return 1
 }
