@@ -1,74 +1,77 @@
 # MailStrip
 
-Ein pulsierender Farbstreifen am oberen Bildschirmrand (macOS), der anzeigt, **von wem ungelesene Mails** im Outlook-Posteingang liegen.
+Ein langsam pulsierender Farbstreifen am oberen Bildschirmrand (macOS). Er erscheint **nur**, wenn ungelesene Mails von Kunden oder Management im Outlook-Posteingang liegen.
 
-| Farbe | Bedeutung | Menüleiste |
-|---|---|---|
-| 🔵 Blau (langsam) | nichts Wichtiges ungelesen | ● |
-| 🟢 Grün | Mail von einem Kunden | ● K |
-| 🟡 Gelb | Mail vom direkten Line Manager | ● L |
-| 🔴 Rot (schnell) | Mail von höherem Management (Linie ab Ebene 2, Director, VP, C-Level …) | ● M |
-| ⚪ Grau | Anmeldung läuft / nötig oder Verbindungsfehler | ● ? |
+| Farbe | Bedeutung |
+|---|---|
+| 🔴 Rot | Mail von höherem Management (Linie ab Ebene 2, Director, VP, C-Level …) |
+| 🟡 Gelb | Mail vom direkten Line Manager |
+| 🟢 Grün | Mail von einem Kunden |
+| *kein Balken* | nichts davon ungelesen |
 
-Bei mehreren ungelesenen Mails gilt: **Rot > Gelb > Grün > Blau**. Sobald die Mail gelesen ist, geht der Balken beim nächsten Prüfdurchlauf zurück.
+- **Mehrere Kategorien gleichzeitig:** Die Farben wechseln nacheinander, ein Puls je Farbe (z. B. rot → gelb → grün → rot …).
+- **Geschwindigkeit:** immer langsam (3 s pro Puls).
+- **Ende des Alarms:** Mail lesen (spätestens nach 60 s weg) **oder** im Menü quittieren.
+
+## Menüleiste
+
+Das Symbol zeigt farbige Punkte je Kategorie und die Anzahl, z. B. `●● 3`. Ohne Alarm steht dort `○`, bei Problemen zusätzlich `⚠︎`.
+
+Das Menü enthält:
+
+- **Liste der auslösenden Mails**, gruppiert nach Kategorie: Betreff, Absender, Datum und **Grund** (z. B. `Titel: Senior Director …`, `Linie Ebene 2: EVP …`, `Kunden-Domain philips.com`).
+- **Klick auf eine Mail:** öffnet sie in Outlook im Web.
+- **⌥ Option gedrückt halten:** Einträge werden zu „Quittieren: …“, damit lässt sich eine einzelne Mail quittieren.
+- **Alarm löschen (alle quittieren):** blendet alle aktuellen Mails aus. Neue Mails lösen wieder Alarm aus.
+- **Quittierte wieder anzeigen:** nimmt Quittierungen zurück.
+- **Anmelden bei Microsoft …**, **Managerliste jetzt aktualisieren**, **Log öffnen**, **MailStrip beenden**.
 
 ---
 
 ## Architektur
 
 ```
-┌──────────────────────────┐   schreibt    ┌───────────┐   liest alle 2 s   ┌────────────────────┐
-│ MailStrip-Checker.ps1    │ ────────────▶ │ state.txt │ ◀───────────────── │ MailStrip (Swift)  │
-│ (PowerShell, alle 60 s)  │               └───────────┘                    │ Balken + Menü      │
-│  • Microsoft Graph       │                                                └────────────────────┘
-│  • management.json (1×/Woche)                                                     
+┌──────────────────────────┐   schreibt    ┌────────────┐  liest alle 2 s  ┌────────────────────┐
+│ MailStrip-Checker.ps1    │ ────────────▶ │ state.json │ ◀─────────────── │ MailStrip (Swift)  │
+│ (PowerShell, alle 60 s)  │               └────────────┘                  │ Balken + Menü      │
+│  • Microsoft Graph       │                                               │ dismissed.json     │
+│  • management.json (1×/Woche)                                            └────────────────────┘
 └──────────────────────────┘
         ▲ beide werden von launchd (LaunchAgents) beim Login gestartet
 ```
 
-Die beiden Teile sind bewusst getrennt:
-
-- **Swift-App** – nur Anzeige. Kein Zugriff auf Mails, keine Anmeldung. Liest `state.txt`.
-- **PowerShell-Checker** – die gesamte Logik: Anmeldung, Managerliste, Mail-Prüfung.
-
-Verbindendes Element ist eine einzige Textdatei mit einem Wort (`idle`, `customer`, `linemanager`, `management`, `auth`). Dadurch lässt sich jeder Teil einzeln testen.
+- **Swift-App** – nur Anzeige und Quittieren. Kein Zugriff auf Mails, keine Anmeldung.
+- **PowerShell-Checker** – Anmeldung, Managerliste, Mail-Prüfung, Begründung je Treffer.
+- **`state.json`** – Status (`ok`/`auth`), Zeitpunkt der Prüfung und Liste der Treffer.
+- **`dismissed.json`** – IDs quittierter Mails. Bereinigt sich selbst, sobald Mails gelesen sind.
 
 ## Projektstruktur
 
 | Datei | Zweck |
 |---|---|
-| `src/MailStrip.swift` | Balken-App (ein Fenster pro Bildschirm, Puls-Animation, Menü) |
-| `scripts/MailStrip-Common.ps1` | Gemeinsame Funktionen: Pfade, Logging, Anmeldung, Managerliste |
+| `src/MailStrip.swift` | Balken (ein Fenster pro Bildschirm), Animation, Menü, Quittieren |
+| `scripts/MailStrip-Common.ps1` | Pfade, Logging, Status schreiben, Anmeldung, Managerliste |
 | `scripts/MailStrip-Checker.ps1` | Hintergrunddienst: prüft alle 60 s den Posteingang |
-| `scripts/Login.ps1` | Interaktive Anmeldung + sofortige Aktualisierung der Managerliste |
-| `config/config.json` | Vorlage der Einstellungen (wird nur bei Erstinstallation kopiert) |
+| `scripts/Login.ps1` | Interaktive Anmeldung + Aktualisierung der Managerliste |
+| `config/config.json` | Vorlage der Einstellungen |
 | `install.sh` | Komplette Einrichtung inkl. Autostart |
 | `uninstall.sh` | Entfernt Autostart und optional alle Daten |
 
-## Installation
+## Installation / Update
 
-Voraussetzungen: Xcode Command Line Tools (`swiftc`), PowerShell (`pwsh`). **Keine Admin-Rechte nötig.**
+Voraussetzungen: Xcode Command Line Tools (`swiftc`) und PowerShell (`pwsh`). **Keine Admin-Rechte nötig.**
 
 ```bash
-git clone <REPO-URL> ~/mailstrip
-cd ~/mailstrip
+cd ~/Documents/Sources/mailstrip
+git pull            # bei Update
 ./install.sh
 ```
 
-Der Installer
-
-1. prüft `swiftc`, `pwsh` und installiert fehlende Graph-Module (`Microsoft.Graph.Authentication`, `.Users`, `.Mail`) für den aktuellen Benutzer,
-2. stoppt alte Instanzen (auch manuell gestartete Tests),
-3. kopiert alles nach `~/Library/Application Support/MailStrip`,
-4. baut die Swift-App,
-5. startet die **Anmeldung per Device-Code** und lädt die Managerliste,
-6. legt zwei LaunchAgents in `~/Library/LaunchAgents` an und startet sie.
-
-Danach laufen Balken und Prüfung und **starten nach jedem Neustart/Login automatisch**. `./install.sh` kann jederzeit erneut ausgeführt werden (z. B. nach `git pull`); deine `config.json` bleibt dabei erhalten.
+Der Installer prüft die Voraussetzungen, stoppt alte Instanzen, kopiert alles nach `~/Library/Application Support/MailStrip`, baut die App, meldet dich per Device-Code an und richtet zwei LaunchAgents ein. Danach **startet alles nach jedem Neustart/Login automatisch**. Eine vorhandene `config.json` bleibt erhalten; neue Einstellungen werden ergänzt.
 
 ## Konfiguration
 
-Datei: `~/Library/Application Support/MailStrip/config.json` – Änderungen wirken beim nächsten Prüfdurchlauf, **kein Neustart nötig**.
+Datei: `~/Library/Application Support/MailStrip/config.json`. Änderungen wirken beim nächsten Durchlauf, **kein Neustart nötig**.
 
 | Schlüssel | Bedeutung |
 |---|---|
@@ -77,72 +80,62 @@ Datei: `~/Library/Application Support/MailStrip/config.json` – Änderungen wir
 | `managementTitlePatterns` | Regex-Muster für Jobtitel, die rot werden (in JSON `\\b` statt `\b`). |
 | `extraManagementAddresses` | Zusätzliche Adressen, die immer rot sind. |
 | `intervalSeconds` | Prüfintervall (Standard 60). |
-| `managerListRefreshDays` | Alter der Managerliste, ab dem neu geladen wird (Standard 7). |
+| `maxAgeDays` | Nur ungelesene Mails der letzten N Tage zählen (Standard 7). |
+| `managerListRefreshDays` | Managerliste wird nach N Tagen neu geladen (Standard 7). |
 | `managerChainMaxLevels` | Maximale Ebenen nach oben in deiner Linie. |
-
-## Menü (● in der Menüleiste)
-
-- **Anmelden bei Microsoft …** – öffnet ein Terminal mit Device-Code-Anmeldung, aktualisiert die Managerliste und startet den Checker neu.
-- **Managerliste jetzt aktualisieren** – erzwingt die Aktualisierung beim nächsten Durchlauf.
-- **Log öffnen** – zeigt `checker.log` in der Konsole-App.
-- **Test: …** – setzt die Farbe kurz von Hand (wird nach max. 60 s vom Checker überschrieben).
-- **Balken beenden** – bis zum nächsten Login. (Abstürze werden dagegen automatisch neu gestartet.)
 
 ## Code-Erklärung
 
 ### Swift-App (`src/MailStrip.swift`)
 
-- **`StripState`** – die fünf Zustände; der Name entspricht genau dem Text in `state.txt`.
-- **`style(for:)`** – ordnet jedem Zustand Farbe, Pulsdauer und minimale Deckkraft zu.
-- **`StripWindow`** – randloses, transparentes Fenster ganz oben auf einem Bildschirm. Wichtige Eigenschaften:
-  - `level = .screenSaver` → liegt über Menüleiste und Vollbild-Apps,
-  - `ignoresMouseEvents = true` → Klicks gehen durch,
-  - `canJoinAllSpaces` → auf allen Schreibtischen sichtbar.
-  Das Pulsieren ist eine `CABasicAnimation` auf `opacity`, die endlos hin und zurück läuft (GPU-beschleunigt, praktisch keine CPU-Last).
-- **`AppDelegate`** – baut ein Fenster pro Bildschirm, liest `state.txt` alle 2 s und reagiert auf an-/abgesteckte Monitore (`didChangeScreenParametersNotification`).
-- `setActivationPolicy(.accessory)` → kein Dock-Symbol.
+- **`Category`**: `management`, `linemanager`, `customer`. Die Reihenfolge bestimmt die Farbreihenfolge.
+- **`MailItem` / `StatusFile`**: Abbild von `state.json`, gelesen mit `Codable`.
+- **`StripWindow`**: randloses, transparentes Fenster ganz oben (`level = .screenSaver`, `ignoresMouseEvents`, auf allen Spaces). Ist standardmäßig **unsichtbar**.
+  - **Puls**: `CAKeyframeAnimation` auf `opacity`, dunkel → hell → dunkel in 3 s.
+  - **Farbwechsel**: zweite Keyframe-Animation auf `backgroundColor` mit `calculationMode = .discrete`. Die Dauer ist Anzahl Farben × 3 s, so springt die Farbe immer am dunkelsten Punkt.
+- **`AppDelegate`**:
+  - `refresh()` liest `state.json` alle 2 s, aber dekodiert nur bei Änderung.
+  - `update()` blendet die Fenster ein/aus und startet die Animation nur neu, wenn sich die Kategorien ändern.
+  - `menuNeedsUpdate` baut das Menü bei jedem Öffnen neu. Jede Mail hat einen alternativen Eintrag (`isAlternate`, ⌥), der sie quittiert.
+  - `problemText()` erkennt fehlende Anmeldung und veraltete Daten (> 5 min) → `⚠︎`.
+  - `pruneDismissed()` entfernt IDs gelesener Mails aus `dismissed.json`, aber nur bei Status `ok`.
 
 ### Gemeinsame Funktionen (`scripts/MailStrip-Common.ps1`)
 
-- **`Set-StripState`** – schreibt erst eine `.tmp`-Datei und benennt sie dann um, damit die App nie eine halbe Datei liest.
-- **`Connect-MailStrip`** – meldet sich mit `Mail.Read` und `User.Read.All` an. `-ContextScope CurrentUser` speichert das Token im Benutzer-Cache, damit es nach einem Neustart wiederverwendet werden kann.
-- **`Test-ManagerListDue`** – Liste fehlt, ist älter als 7 Tage oder wurde über das Menü angefordert.
-- **`Update-ManagerList`** – holt
-  1. deine **Kette nach oben** über `Get-MgUserManager` (Abbruch, wenn eine Person erneut auftaucht – der CEO ist im Verzeichnis sein eigener Manager),
-  2. **alle aktiven internen Konten**, deren Jobtitel auf ein Muster passt.
-  Wird nichts gefunden, bleibt die alte Liste erhalten.
-- **`Read-ManagerList`** – baut daraus `LineManager` (Ebene 1, gelb) und ein `HashSet` für Rot (Ebene 2+, Titel-Treffer, Zusatzadressen). Der Line Manager wird aus Rot entfernt, damit er gelb bleibt, auch wenn sein Titel passt.
+- **`Write-StripStatus`**: schreibt `state.json` atomar (tmp-Datei + Umbenennen).
+- **`Connect-MailStrip`**: Anmeldung mit `Mail.Read` und `User.Read.All`. Das Token wird im Benutzer-Cache gespeichert (`-ContextScope CurrentUser`).
+- **`Update-ManagerList`**: holt deine Kette nach oben (Abbruch an der Spitze, weil der CEO sein eigener Manager ist) und alle internen Konten mit passendem Jobtitel. Speichert alles in `management.json`.
+- **`Read-ManagerList`**: liefert den Line Manager und ein Wörterbuch *Adresse → Grund* für Rot.
 
 ### Checker (`scripts/MailStrip-Checker.ps1`)
 
-- **`Get-InboxState`** – lädt bis zu 100 ungelesene Mails im Posteingang, aber nur das Feld `from`. Jede Mail wird eingestuft; der höchste Rang gewinnt.
-- **Hauptschleife** – anmelden → Managerliste ggf. aktualisieren → Posteingang prüfen → `state.txt` schreiben → 60 s warten. Bei Anmeldefehlern wird der Balken grau und beim nächsten Durchlauf neu angemeldet. Geloggt werden nur Zustandswechsel und Fehler.
+- **`Get-InboxItems`**: lädt ungelesene Mails der letzten `maxAgeDays` Tage (nur `id`, `from`, `subject`, `receivedDateTime`, `webLink`) und ordnet jede einer Kategorie mit Grund zu. Nicht relevante Mails werden verworfen.
+- **Hauptschleife**: anmelden → Managerliste ggf. aktualisieren → prüfen → `state.json` → 60 s warten. Bei Änderungen wird jeder Treffer mit Grund geloggt. Kurzzeitige Fehler lassen den letzten Stand stehen.
 
 ### Autostart (`install.sh`)
 
-Zwei **LaunchAgents** (laufen im Benutzerkontext, keine Admin-Rechte):
-
-| Label | Programm | Neustart-Verhalten |
+| Label | Programm | Neustart |
 |---|---|---|
-| `com.andreasbrolund.mailstrip` | Swift-App | nur nach Absturz (`SuccessfulExit = false`) |
-| `com.andreasbrolund.mailstrip.checker` | `pwsh MailStrip-Checker.ps1` | immer (`KeepAlive`), frühestens nach 30 s |
+| `com.andreasbrolund.mailstrip` | Swift-App | nur nach Absturz |
+| `com.andreasbrolund.mailstrip.checker` | `pwsh MailStrip-Checker.ps1` | immer, frühestens nach 30 s |
 
 ## Fehlersuche
 
 | Symptom | Ursache / Lösung |
 |---|---|
-| Balken bleibt **grau** | Token abgelaufen → Menü **Anmelden bei Microsoft …** |
-| Kein Balken nach Neustart | `launchctl print gui/$(id -u)/com.andreasbrolund.mailstrip` prüfen; ggf. `./install.sh` erneut |
-| Person falsch eingestuft | `management.json` ansehen, Muster in `config.json` anpassen, Menü **Managerliste jetzt aktualisieren** |
-| Status der Dienste | `launchctl list \| grep mailstrip` |
-| Log | `tail -f ~/Library/Logs/MailStrip/checker.log` |
+| Alarm, aber unklar warum | Menü öffnen: Grund steht unter jeder Mail. Oder `checker.log` ansehen. |
+| Falsche Person rot | Titel-Muster in `config.json` anpassen → **Managerliste jetzt aktualisieren** |
+| `⚠︎ Anmeldung nötig` | Menü **Anmelden bei Microsoft …** |
+| `⚠︎ Letzte Prüfung …` | Checker läuft nicht: `launchctl list \| grep mailstrip`, Log prüfen |
+| Rohdaten ansehen | `cat ~/Library/Application\ Support/MailStrip/state.json` |
+| Log live | `tail -f ~/Library/Logs/MailStrip/checker.log` |
 
 ## Bekannte Grenzen
 
-- Geprüft wird nur der **Posteingang** – Mails, die Regeln in Unterordner verschieben, werden nicht erkannt.
+- Geprüft wird nur der **Posteingang**. Mails, die Regeln in Unterordner verschieben, werden nicht erkannt.
+- Mails öffnen sich in **Outlook im Web**, nicht in der Outlook-App.
 - Bei weitergeleiteten Mails zählt die weiterleitende Person als Absender.
-- Wie lange das gespeicherte Token gültig bleibt, hängt von den Cerence-Richtlinien ab (Conditional Access). Danach ist eine erneute Anmeldung über das Menü nötig.
-- Neue Manager werden erst bei der nächsten wöchentlichen Aktualisierung erkannt (oder per Menü sofort).
+- Wie lange das Token gültig bleibt, hängt von den Cerence-Richtlinien ab.
 
 ## Deinstallation
 

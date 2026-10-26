@@ -15,7 +15,7 @@ set -euo pipefail   # bei jedem Fehler abbrechen
 
 # --- Pfade und Namen ---------------------------------------------------------
 # REPO_DIR: von hier werden Quellen gelesen (dein Git-Checkout).
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"                 # Ordner dieses Skripts
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$HOME/Library/Application Support/MailStrip"     # Programm + Daten
 LOG_DIR="$HOME/Library/Logs/MailStrip"                    # Logs (Konsole-App)
 AGENT_DIR="$HOME/Library/LaunchAgents"                    # Autostart pro Benutzer
@@ -24,7 +24,7 @@ LABEL_STRIP="com.andreasbrolund.mailstrip"                # Balken (Swift)
 LABEL_CHECK="com.andreasbrolund.mailstrip.checker"        # Mail-Prüfung (PowerShell)
 
 # Hilfsfunktion: gibt eine Überschrift pro Schritt aus.
-step() { echo; echo "==> $*"; }                           # hübsche Überschriften
+step() { echo; echo "==> $*"; }
 
 # --- 1. Voraussetzungen ------------------------------------------------------
 step "Prüfe Voraussetzungen"
@@ -37,7 +37,7 @@ PWSH="$(command -v pwsh || true)"
 echo "swiftc: $(command -v swiftc)"
 echo "pwsh:   $PWSH"
 
-# Nur die drei benötigten Graph-Module; fehlende werden für den Benutzer installiert.
+# Nur die drei benötigten Graph-Module; fehlende werden installiert.
 # -Force unterdrückt die Rückfrage "Untrusted repository" (PSGallery).
 # -Scope CurrentUser -> Installation ohne Admin-Rechte.
 "$PWSH" -NoLogo -NoProfile -Command '
@@ -53,6 +53,7 @@ step "Stoppe laufende MailStrip-Prozesse"
 # bootout = Dienst entladen. Fehler ignorieren, falls noch nicht installiert.
 launchctl bootout "$GUI/$LABEL_STRIP" 2>/dev/null || true
 launchctl bootout "$GUI/$LABEL_CHECK" 2>/dev/null || true
+# Auch Prozesse beenden, die nicht über launchd laufen.
 pkill -x MailStrip 2>/dev/null || true                    # z. B. manuell gestarteter Test
 pkill -f MailStrip-Checker.ps1 2>/dev/null || true
 
@@ -62,15 +63,31 @@ step "Kopiere Dateien nach $APP_DIR"
 mkdir -p "$APP_DIR" "$LOG_DIR" "$AGENT_DIR"
 # PowerShell-Skripte immer überschreiben -> Updates aus GitHub kommen an.
 cp "$REPO_DIR"/scripts/*.ps1 "$APP_DIR/"
+# Alte Statusdatei der Vorversion entfernen (sonst evtl. Fehlalarm).
+rm -f "$APP_DIR/state.txt"
 # Config nur beim ersten Mal kopieren – eigene Änderungen bleiben erhalten.
 if [ ! -f "$APP_DIR/config.json" ]; then
   cp "$REPO_DIR/config/config.json" "$APP_DIR/config.json"
   echo "config.json angelegt"
 else
   echo "config.json existiert – bleibt unverändert"
+  # Neue Einstellungen aus der Vorlage ergänzen, ohne eigene Werte zu ändern.
+  # Pfade per Umgebungsvariable übergeben (pwsh -Command kennt kein $args).
+  CFG_USER="$APP_DIR/config.json" CFG_TMPL="$REPO_DIR/config/config.json" \
+  "$PWSH" -NoLogo -NoProfile -Command '
+    $user = Get-Content $env:CFG_USER -Raw | ConvertFrom-Json
+    $tmpl = Get-Content $env:CFG_TMPL -Raw | ConvertFrom-Json
+    # Jede Einstellung der Vorlage, die in deiner Datei fehlt, wird ergänzt.
+    $added = foreach ($p in $tmpl.PSObject.Properties) {
+      if (-not $user.PSObject.Properties[$p.Name]) {
+        $user | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value; $p.Name }
+    }
+    if ($added) { $user | ConvertTo-Json -Depth 5 | Set-Content $env:CFG_USER -Encoding utf8
+                  Write-Host "Ergänzt: $($added -join ", ")" }
+  '
 fi
 
-# Login.command: Doppelklick bzw. Menüeintrag öffnet Terminal zur Anmeldung.
+# Login.command: Menüeintrag öffnet damit ein Terminal zur Anmeldung.
 # Der pwsh-Pfad wird beim Installieren fest eingetragen.
 cat > "$APP_DIR/Login.command" <<CMD
 #!/bin/bash
@@ -95,9 +112,9 @@ step "Anmeldung bei Microsoft Graph"
 # --- 6. LaunchAgents ---------------------------------------------------------
 step "Richte Autostart ein"
 
-# Balken: startet beim Login. KeepAlive nur bei Absturz – "Balken beenden"
-# im Menü (normales Ende) wird respektiert bis zum nächsten Login.
 # Plist = Konfigurationsdatei für launchd (Apples Dienst-Manager).
+# Balken: startet beim Login. KeepAlive nur bei Absturz – "MailStrip beenden"
+# im Menü (normales Ende) wird respektiert bis zum nächsten Login.
 cat > "$AGENT_DIR/$LABEL_STRIP.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

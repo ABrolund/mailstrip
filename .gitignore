@@ -1,7 +1,9 @@
 # Build-Ergebnis und Laufzeitdaten gehören nicht ins Repo
 MailStrip
 management.json
+state.json
 state.txt
+dismissed.json
 refresh-now
 *.tmp
 *.log

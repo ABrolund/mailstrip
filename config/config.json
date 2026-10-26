@@ -5,6 +5,7 @@
                               "\\bHead of\\b", "\\bChief\\b", "\\bC[ETOIF]O\\b", "Bereichsleit", "Direktor"],
   "extraManagementAddresses": [],
   "intervalSeconds": 60,
+  "maxAgeDays": 7,
   "managerListRefreshDays": 7,
   "managerChainMaxLevels": 10
 }

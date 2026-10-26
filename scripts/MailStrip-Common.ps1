@@ -3,14 +3,15 @@
 # -----------------------------------------------------------------------------
 # Gemeinsame Funktionen für Checker und Login. Wird per Dot-Sourcing geladen:
 #     . (Join-Path $PSScriptRoot 'MailStrip-Common.ps1')
-# Enthält: Pfade, Logging, Config lesen, Graph-Anmeldung, Managerliste.
+# Enthält: Pfade, Logging, Status schreiben, Config lesen, Graph-Anmeldung,
+#          Managerliste laden/aktualisieren.
 # =============================================================================
 
 # --- Pfade -------------------------------------------------------------------
 # Alles liegt unter ~/Library/Application Support/MailStrip (keine Admin-Rechte,
 # keine Probleme mit macOS-Datenschutz wie bei ~/Documents).
 $script:AppDir      = Join-Path $HOME 'Library/Application Support/MailStrip'
-$script:StateFile   = Join-Path $AppDir 'state.txt'        # wird von der Swift-App gelesen
+$script:StateFile   = Join-Path $AppDir 'state.json'       # wird von der Swift-App gelesen
 $script:ConfigFile  = Join-Path $AppDir 'config.json'      # deine Einstellungen
 $script:ManagerFile = Join-Path $AppDir 'management.json'  # Cache der Managerliste
 $script:RefreshFlag = Join-Path $AppDir 'refresh-now'      # Signal aus dem Menü
@@ -27,12 +28,30 @@ function Write-Log([string]$Message) {
     Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $Message"
 }
 
-# --- Zustand für den Balken schreiben ---------------------------------------
-# Erst in eine temporäre Datei, dann umbenennen. So liest die App nie eine
+# --- Zeit als ISO-8601 in UTC -------------------------------------------------
+# Format, das die Swift-App (ISO8601DateFormatter) direkt versteht.
+function ConvertTo-IsoUtc($Date) {
+    if (-not $Date) { return '' }
+    return ([datetime]$Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
+}
+
+# --- Status für den Balken schreiben -----------------------------------------
+# $Status: 'ok' (Prüfung erfolgreich) oder 'auth' (Anmeldung nötig).
+# $Items:  Liste der auslösenden Mails (leer = kein Balken).
+# Erst in eine temporäre Datei, dann umbenennen -> die App liest nie eine
 # halb geschriebene Datei.
-function Set-StripState([string]$State) {
+# Format siehe StatusFile/MailItem in MailStrip.swift.
+function Write-StripStatus([string]$Status, $Items, [string]$Message = '') {
+    if ($null -eq $Items) { $Items = @() }   # @($null) wäre ein Array mit einem Element
+    $obj = [ordered]@{
+        status  = $Status
+        updated = ConvertTo-IsoUtc (Get-Date)
+        message = $Message
+        items   = @($Items)
+    }
     $tmp = "$StateFile.tmp"
-    Set-Content -Path $tmp -Value $State -NoNewline
+    # -Depth 5: verschachtelte Einträge vollständig schreiben.
+    $obj | ConvertTo-Json -Depth 5 | Set-Content -Path $tmp -Encoding utf8
     Move-Item -Path $tmp -Destination $StateFile -Force
 }
 
@@ -42,13 +61,18 @@ function Get-MailStripConfig {
     Get-Content -Path $ConfigFile -Raw | ConvertFrom-Json
 }
 
+# Prüft, ob eine Domain zu einer Liste passt (Subdomains zählen mit).
+# Gibt die passende Listen-Domain zurück oder $null.
+function Find-Domain([string]$Domain, $List) {
+    $List | Where-Object { $Domain -eq $_ -or $Domain.EndsWith(".$_") } | Select-Object -First 1
+}
+
 # --- Anmeldung bei Microsoft Graph ------------------------------------------
 # -ContextScope CurrentUser speichert das Token im Benutzer-Cache, damit es
 # nach einem Neustart wiederverwendet werden kann. Ist das Token gültig, kehrt
 # Connect-MgGraph sofort zurück. Ist es abgelaufen, wartet der Device-Code-
 # Flow (Code steht im Log) – Anmelden geht bequemer über das Menü.
 function Connect-MailStrip {
-    # Schon verbunden und alle nötigen Rechte vorhanden? Dann nichts tun.
     # Get-MgContext liefert die aktuelle Sitzung dieses Prozesses (oder nichts).
     $ctx = Get-MgContext
     if ($ctx -and -not ($Scopes | Where-Object { $ctx.Scopes -notcontains $_ })) { return $true }
@@ -80,6 +104,7 @@ function Update-ManagerList($Config) {
 
     # (1) Kette nach oben. Abbruch an der Spitze: Der CEO ist im Verzeichnis
     #     sein eigener Manager, sonst gäbe es eine Endlosschleife.
+    # $seen merkt sich bereits besuchte Personen (Schutz vor Schleifen).
     $chain = @()
     $seen  = @{ $me.Id = $true }
     $id    = $me.Id
@@ -93,14 +118,13 @@ function Update-ManagerList($Config) {
     }
 
     # (2) Alle aktiven Konten laden und nach Jobtitel filtern.
+    #     -All blättert automatisch durch alle Seiten.
     #     Nur interne Domains, damit Kunden-Titel ("Director" bei Philips) nicht rot werden.
-    # -All blättert automatisch durch alle Seiten; -PageSize 999 = möglichst große Seiten.
     $all  = Get-MgUser -All -Filter 'accountEnabled eq true' -Property $props -PageSize 999
     $byTitle = foreach ($u in $all) {
         $mail = "$($u.Mail)".ToLower()
         if (-not $mail) { continue }
-        $domain = $mail.Split('@')[-1]
-        $internal = $Config.internalDomains | Where-Object { $domain -eq $_ -or $domain.EndsWith(".$_") }
+        $internal = Find-Domain $mail.Split('@')[-1] $Config.internalDomains
         $title    = "$($u.JobTitle)"
         $isMgmt   = $Config.managementTitlePatterns | Where-Object { $title -match $_ }
         if ($internal -and $isMgmt) { [pscustomobject]@{ name = $u.DisplayName; mail = $mail; title = $title } }
@@ -112,8 +136,7 @@ function Update-ManagerList($Config) {
         return
     }
 
-    # Atomar speichern (erst tmp, dann umbenennen).
-    # Zeitstempel hilft bei der Fehlersuche (wann zuletzt aktualisiert?).
+    # Atomar speichern (erst tmp, dann umbenennen). Zeitstempel hilft bei der Fehlersuche.
     $data = [pscustomobject]@{ updated = (Get-Date).ToString('s'); chain = $chain; byTitle = @($byTitle) }
     $tmp  = "$ManagerFile.tmp"
     $data | ConvertTo-Json -Depth 5 | Set-Content -Path $tmp -Encoding utf8
@@ -121,19 +144,29 @@ function Update-ManagerList($Config) {
     Write-Log "Managerliste: $($chain.Count) in deiner Linie, $(@($byTitle).Count) per Titel."
 }
 
-# Liest management.json und baut daraus die zwei Gruppen für die Farben:
-#   LineManager = Ebene 1 der Kette           -> gelb
-#   Red         = Ebene 2+ , Titel-Treffer,   -> rot
-#                 extraManagementAddresses
+# Liest management.json und baut daraus die Gruppen für die Farben:
+#   LineManager = Ebene 1 der Kette                                  -> gelb
+#   Red         = Wörterbuch Adresse -> Grund (Ebene 2+, Titel,
+#                 extraManagementAddresses)                          -> rot
+# Der Grund wird später im Menü angezeigt ("warum ist das rot?").
 function Read-ManagerList($Config) {
-    # JSON-Datei einlesen (von Update-ManagerList geschrieben).
     $data = Get-Content -Path $ManagerFile -Raw | ConvertFrom-Json
+    # Ebene 1 der Kette = direkter Vorgesetzter.
     $line = ($data.chain | Where-Object level -eq 1 | Select-Object -First 1).mail
-    $red  = [System.Collections.Generic.HashSet[string]]::new()   # schnelle Suche
-    $data.chain   | Where-Object level -gt 1 | ForEach-Object { [void]$red.Add($_.mail) }
-    $data.byTitle | ForEach-Object { [void]$red.Add($_.mail) }
-    $Config.extraManagementAddresses | ForEach-Object { [void]$red.Add("$_".ToLower()) }
-    if ($line) { [void]$red.Remove($line) }   # Line Manager bleibt gelb, auch wenn sein Titel passt
-    # Hashtable mit beiden Gruppen an den Checker zurückgeben.
+    $red  = [System.Collections.Generic.Dictionary[string,string]]::new()
+
+    foreach ($c in @($data.chain | Where-Object level -gt 1)) {
+        if ($c.mail) { $red[$c.mail] = "Linie Ebene $($c.level): $($c.title)" }
+    }
+    foreach ($b in @($data.byTitle)) {
+        # Linien-Grund hat Vorrang, weil er aussagekräftiger ist.
+        if ($b.mail -and -not $red.ContainsKey($b.mail)) { $red[$b.mail] = "Titel: $($b.title)" }
+    }
+    foreach ($a in @($Config.extraManagementAddresses)) {
+        if ($a) { $red["$a".ToLower()] = 'Manuell in config.json' }
+    }
+    # Line Manager bleibt gelb, auch wenn sein Titel passt.
+    if ($line) { [void]$red.Remove($line) }
+    # Rückgabe als Hashtable an den Checker.
     return @{ LineManager = $line; Red = $red }
 }
