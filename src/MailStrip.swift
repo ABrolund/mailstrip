@@ -94,6 +94,9 @@ struct StatusFile: Codable {
     let updated: String?    // Zeitpunkt der letzten Prüfung (UTC)
     let message: String?    // Fehlertext, falls vorhanden
     let items: [MailItem]
+    let monitoredFolders: Int?  // Anzahl tatsächlich geprüfter Ordner
+    let managementCount: Int?   // Anzahl rot eingestufter Kontakte
+    let lineManager: String?     // Adresse des direkten Vorgesetzten
 }
 
 // -----------------------------------------------------------------------------
@@ -337,7 +340,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let p = problemText() { info("⚠︎ \(p)"); menu.addItem(.separator()) }
 
         let items = visibleItems()
-        if items.isEmpty { info("Keine Alarme") }
+        if items.isEmpty {
+            // Positiver Betriebsstatus: macht sichtbar, dass MailStrip aktiv ist
+            // und nicht nur "nichts anzeigt". Bei einem Problem steht darüber ⚠︎.
+            info("✓ System OK – keine Alarme")
+            if let u = state?.updated { info("Letzte Prüfung: \(formatDate(u))") }
+            if let n = state?.monitoredFolders, n > 0 { info("Überwachte Ordner: \(n)") }
+            if let n = state?.managementCount, n > 0 { info("Management-Kontakte: \(n)") }
+            if let m = state?.lineManager, !m.isEmpty { info("Line Manager: \(m)") }
+        }
 
         // Je Kategorie eine Überschrift und darunter die Mails.
         for c in Category.allCases {

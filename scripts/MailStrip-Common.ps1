@@ -41,13 +41,16 @@ function ConvertTo-IsoUtc($Date) {
 # $Items:  Liste der auslösenden Mails (leer = kein Balken).
 # Erst in eine temporäre Datei, dann umbenennen -> die App liest nie eine
 # halb geschriebene Datei.
-function Write-StripStatus([string]$Status, $Items, [string]$Message = '') {
+function Write-StripStatus([string]$Status, $Items, [string]$Message = '', $Info = $null) {
     if ($null -eq $Items) { $Items = @() }   # @($null) wäre ein Array mit einem Element
     $obj = [ordered]@{
         status  = $Status
         updated = ConvertTo-IsoUtc (Get-Date)
         message = $Message
         items   = @($Items)
+        monitoredFolders = if ($Info) { [int]$Info.MonitoredFolders } else { 0 }
+        managementCount  = if ($Info) { [int]$Info.ManagementCount } else { 0 }
+        lineManager      = if ($Info) { "$($Info.LineManager)" } else { '' }
     }
     $tmp = "$StateFile.tmp"
     # -Depth 5: verschachtelte Einträge vollständig schreiben.

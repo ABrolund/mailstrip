@@ -215,7 +215,15 @@ while ($true) {
         # 3.–5. Mails prüfen und Ergebnis schreiben.
         # Leere Liste ist ein gültiges Ergebnis -> Balken verschwindet.
         $items = Get-InboxItems $config $managers
-        Write-StripStatus 'ok' $items
+        # Betriebsdaten für den Statusbereich im Menü. Die Ordnertabelle liegt
+        # bereits im Cache, daher entsteht hier kein zusätzlicher Graph-Aufruf.
+        $folderMap = Get-CurrentFolderMap $config
+        $info = @{
+            MonitoredFolders = @($folderMap.Values | Where-Object { -not $_.Excluded }).Count
+            ManagementCount  = $managers.Red.Count
+            LineManager      = $managers.LineManager
+        }
+        Write-StripStatus 'ok' $items '' $info
 
         # Bei Änderung jeden Treffer mit Grund loggen -> Fehlalarme nachvollziehbar.
         # Signatur = alle Mail-IDs; ändert sich nur bei neuen/gelesenen Mails.
