@@ -1,0 +1,8 @@
+# Build-Ergebnis und Laufzeitdaten gehören nicht ins Repo
+MailStrip
+management.json
+state.txt
+refresh-now
+*.tmp
+*.log
+.DS_Store

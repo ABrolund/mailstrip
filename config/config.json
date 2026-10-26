@@ -1,0 +1,10 @@
+{
+  "customerDomains": ["philips.com", "volkswagen.de", "cariad.technology", "audi.de"],
+  "internalDomains": ["cerence.com"],
+  "managementTitlePatterns": ["\\bDirector\\b", "\\bVP\\b", "Vice President", "\\bSVP\\b", "\\bEVP\\b",
+                              "\\bHead of\\b", "\\bChief\\b", "\\bC[ETOIF]O\\b", "Bereichsleit", "Direktor"],
+  "extraManagementAddresses": [],
+  "intervalSeconds": 60,
+  "managerListRefreshDays": 7,
+  "managerChainMaxLevels": 10
+}
