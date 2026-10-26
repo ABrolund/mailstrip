@@ -3,10 +3,11 @@
 // -----------------------------------------------------------------------------
 // Zweck:
 //   Zeigt einen schmalen, langsam pulsierenden Farbstreifen am oberen Rand
-//   JEDES Bildschirms – aber NUR, wenn ungelesene Mails von Kunden oder
-//   Management im Posteingang liegen. Sonst ist kein Balken zu sehen.
+//   JEDES Bildschirms – aber NUR, wenn relevante ungelesene Mails vorliegen.
+//   Sonst ist kein Balken zu sehen.
 //
-//   Farben:  rot = Management, gelb = Line Manager, grün = Kunde.
+//   Farben:  rot = Management, gelb = Line Manager, türkis = @-Erwähnung,
+//            grün = Kunde.
 //   Treffen mehrere zu, wechseln die Farben nacheinander (ein Puls je Farbe).
 //
 // Zusammenspiel:
@@ -20,10 +21,6 @@
 //   - ⌥ Option gedrückt halten: einzelne Mail quittieren
 //   - "Alarm löschen": alle aktuellen Mails quittieren
 //
-// Bauen:
-//   swiftc -O MailStrip.swift -o MailStrip   (macht install.sh automatisch)
-// =============================================================================
-
 // Ablauf zur Laufzeit:
 //   1. Start: Fenster je Bildschirm anlegen (unsichtbar), Menüleisten-Symbol setzen.
 //   2. Alle 2 s: state.json lesen -> sichtbare Mails bestimmen.
@@ -32,10 +29,9 @@
 //   4. Menü öffnen      -> Liste wird aus dem aktuellen Stand neu gebaut.
 //   5. Quittieren       -> Mail-ID in dismissed.json, Balken sofort aktualisiert.
 //
-// Warum eine Datei statt direkter Kommunikation?
-//   - Beide Teile können unabhängig neu starten.
-//   - state.json lässt sich zur Fehlersuche einfach ansehen:
-//     cat ~/Library/Application\ Support/MailStrip/state.json
+// Bauen:
+//   swiftc -O MailStrip.swift -o MailStrip   (macht install.sh automatisch)
+// =============================================================================
 
 import Cocoa        // Fenster, Menüleiste, Farben
 import QuartzCore   // CALayer + Keyframe-Animationen für Puls und Farbwechsel
@@ -43,21 +39,25 @@ import QuartzCore   // CALayer + Keyframe-Animationen für Puls und Farbwechsel
 // -----------------------------------------------------------------------------
 // Kategorien, wie sie der Checker in state.json schreibt.
 // Die Reihenfolge der Fälle ist zugleich die Anzeigereihenfolge (rot zuerst).
-// -----------------------------------------------------------------------------
 // Codable: Wert wird direkt aus dem JSON-Text gelesen ("management" usw.).
 // CaseIterable: erlaubt Category.allCases für die feste Reihenfolge.
+// -----------------------------------------------------------------------------
 enum Category: String, Codable, CaseIterable {
     case management    // höheres Management -> rot
     case linemanager   // direkter Vorgesetzter -> gelb
+    case mention       // @-Erwähnung in der Mail -> türkis
     case customer      // Kunden-Domain -> grün
 }
 
-// Farbe je Kategorie.
-// Systemfarben passen sich automatisch an Hell-/Dunkelmodus an.
+// Türkis (#40E0D0). Eigene Farbe, weil macOS kein "systemTurquoise" kennt.
+let turquoise = NSColor(calibratedRed: 0.25, green: 0.88, blue: 0.82, alpha: 1)
+
+// Farbe je Kategorie. Systemfarben passen sich an Hell-/Dunkelmodus an.
 func color(for c: Category) -> NSColor {
     switch c {
     case .management:  return .systemRed
     case .linemanager: return .systemYellow
+    case .mention:     return turquoise
     case .customer:    return .systemGreen
     }
 }
@@ -67,12 +67,13 @@ func label(for c: Category) -> String {
     switch c {
     case .management:  return "Management"
     case .linemanager: return "Line Manager"
+    case .mention:     return "@-Erwähnung"
     case .customer:    return "Kunde"
     }
 }
 
 // -----------------------------------------------------------------------------
-// Datenmodell von state.json (muss zu Write-StripStatus im Checker passen).
+// Datenmodell von state.json (muss zu Write-StripStatus / Get-InboxItems passen).
 // Optionale Felder, weil z. B. ein Betreff in Outlook leer sein kann.
 // -----------------------------------------------------------------------------
 struct MailItem: Codable {
@@ -97,8 +98,8 @@ struct StatusFile: Codable {
 
 // -----------------------------------------------------------------------------
 // Einstellungen für die Darstellung.
-// -----------------------------------------------------------------------------
 // Werte hier ändern und neu bauen (./install.sh), um das Aussehen anzupassen.
+// -----------------------------------------------------------------------------
 let stripHeight: CGFloat = 6       // Höhe des Streifens in Punkten
 let pulsePeriod: Double  = 3.0     // ein Puls dauert immer 3 s (immer langsam)
 let minAlpha: Double     = 0.25    // dunkelster Punkt des Pulses
@@ -115,8 +116,8 @@ let refreshURL    = appDir.appendingPathComponent("refresh-now")     // Signal: 
 let loginURL      = appDir.appendingPathComponent("Login.command")   // Terminal-Anmeldung
 let logURL        = home.appendingPathComponent("Library/Logs/MailStrip/checker.log")
 
-// Formatierer für Datumsangaben (einmal anlegen, das Anlegen ist teuer).
 // isoParser liest die UTC-Zeit aus dem Checker, shortDate zeigt sie lokal an.
+// Einmal anlegen, das Anlegen von Formatierern ist teuer.
 let isoParser = ISO8601DateFormatter()
 let shortDate: DateFormatter = { let f = DateFormatter(); f.dateFormat = "dd.MM. HH:mm"; return f }()
 
@@ -130,7 +131,6 @@ func formatDate(_ s: String?) -> String {
 // Ein randloses, durchsichtiges Fenster pro Bildschirm, das nur den Balken
 // enthält. Liegt über allem, auf allen Spaces, Klicks gehen hindurch.
 // =============================================================================
-// Eigene Unterklasse, damit Fenster und Layer zusammen verwaltet werden.
 final class StripWindow: NSWindow {
     let bar = CALayer()   // die farbige Fläche
 
@@ -165,7 +165,6 @@ final class StripWindow: NSWindow {
     //   Puls:        Deckkraft dunkel -> hell -> dunkel, Dauer pulsePeriod.
     //   Farbwechsel: bei mehreren Farben springt die Farbe jeweils am
     //                dunkelsten Punkt weiter -> ein Puls pro Farbe.
-    // Wird nur aufgerufen, wenn sich die Kategorien ändern (siehe update()).
     func apply(colors: [NSColor]) {
         // Alte Animationen entfernen, sonst laufen mehrere übereinander.
         bar.removeAllAnimations()
@@ -201,9 +200,8 @@ final class StripWindow: NSWindow {
 
 // =============================================================================
 // App-Logik: state.json beobachten, Balken ein-/ausblenden, Menü bauen,
-// Quittierungen verwalten.
+// Quittierungen verwalten. NSMenuDelegate wird für menuNeedsUpdate benötigt.
 // =============================================================================
-// NSMenuDelegate wird für menuNeedsUpdate benötigt.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // --- Zustand der App ---
     var windows: [StripWindow] = []
@@ -255,9 +253,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // ---------------------------------------------------------------- Daten --
 
     // state.json lesen, aber nur bei Änderung neu auswerten.
+    // Ist die Datei kaputt (Dekodierfehler), bleibt der letzte gültige Stand.
     func refresh() {
-        // Vergleich mit lastData spart unnötiges Dekodieren bei gleichem Inhalt.
-        // Ist die Datei kaputt (Dekodierfehler), bleibt der letzte gültige Stand.
         if let data = try? Data(contentsOf: stateURL), data != lastData {
             lastData = data
             if let s = try? JSONDecoder().decode(StatusFile.self, from: data) {
@@ -275,8 +272,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // Problemtext für Menüleiste/Menü, oder nil, wenn alles in Ordnung ist.
+    // Drei Fälle: keine Datei, Anmeldung nötig, Daten zu alt.
     func problemText() -> String? {
-        // Drei Fälle: keine Datei, Anmeldung nötig, Daten zu alt.
         guard let s = state else { return "Noch keine Daten vom Checker" }
         if s.status == "auth" { return "Anmeldung nötig" }
         if let u = s.updated, let d = isoParser.date(from: u),
@@ -291,11 +288,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Balken ein-/ausblenden und Menüleisten-Symbol setzen.
     // Wird alle 2 s aufgerufen, ist aber günstig: Animation nur bei Änderung.
     func update() {
-        // Kategorien in fester Reihenfolge (rot, gelb, grün), nur wenn vorhanden.
+        // Kategorien in fester Reihenfolge (rot, gelb, türkis, grün), nur wenn vorhanden.
         let items = visibleItems()
         let cats = Category.allCases.filter { c in items.contains { $0.category == c } }
 
-        // Animation nur neu starten, wenn sich die Kategorien geändert haben.
         if shown != cats {
             shown = cats
             if cats.isEmpty {
@@ -363,14 +359,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 open.target = self
                 open.representedObject = it.webLink
                 open.attributedTitle = itemTitle(it)
-                // Tooltip (Maus kurz stehen lassen) zeigt Adresse und Grund vollständig.
+                // Tooltip (Maus kurz stehen lassen) zeigt Adresse, Ordner und Grund vollständig.
                 open.toolTip = "\(it.address ?? "")\nOrdner: \(it.folder ?? "-")\nGrund: \(it.reason ?? "-")"
                 open.indentationLevel = 1
                 menu.addItem(open)
 
                 // Alternativer Eintrag (sichtbar mit ⌥ Option): Mail quittieren.
                 // isAlternate + .option: ersetzt den Eintrag darüber, solange ⌥ gedrückt ist.
-            let dis = NSMenuItem(title: "Quittieren: \(short(it.subject, 60))",
+                let dis = NSMenuItem(title: "Quittieren: \(short(it.subject, 60))",
                                      action: #selector(dismissOne(_:)), keyEquivalent: "")
                 dis.target = self
                 dis.representedObject = it.id
@@ -398,9 +394,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: "MailStrip beenden", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
 
-    // Zweizeiliger Menütext: Betreff fett, darunter Absender · Datum · Grund.
+    // Zweizeiliger Menütext: Betreff fett, darunter Absender · Datum · Ordner · Grund.
+    // Zeilenumbruch im Titel erzeugt einen zweizeiligen Menüeintrag.
     func itemTitle(_ it: MailItem) -> NSAttributedString {
-        // Zeilenumbruch im Titel erzeugt einen zweizeiligen Menüeintrag.
         let t = NSMutableAttributedString(string: short(it.subject, 70),
                                           attributes: [.font: NSFont.boldSystemFont(ofSize: 13)])
         // Ordner nur zeigen, wenn es nicht der Posteingang ist (spart Platz).
@@ -413,8 +409,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // Text kürzen, damit das Menü nicht über den Bildschirm geht.
+    // Leerer oder fehlender Betreff -> Platzhalter.
     func short(_ s: String?, _ max: Int) -> String {
-        // Leerer oder fehlender Betreff -> Platzhalter.
         let s = (s?.isEmpty == false) ? s! : "(kein Betreff)"
         return s.count > max ? String(s.prefix(max)) + "…" : s
     }
@@ -458,7 +454,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func saveDismissed() {
         if let d = try? JSONEncoder().encode(Array(dismissed)) { try? d.write(to: dismissedURL, options: .atomic) }
     }
-    // IDs entfernen, die nicht mehr ungelesen im Posteingang sind (Datei bleibt klein).
+    // IDs entfernen, die nicht mehr ungelesen sind (Datei bleibt klein).
     // Nur bei status "ok" – bei Anmeldeproblemen ist die Liste leer und unzuverlässig.
     // Wird nach jedem erfolgreichen Lesen von state.json aufgerufen.
     func pruneDismissed() {
