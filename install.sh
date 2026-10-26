@@ -82,6 +82,8 @@ else
       if (-not $user.PSObject.Properties[$p.Name]) {
         $user | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value; $p.Name }
     }
+    # Veraltete Einstellung der Vorversion entfernen.
+    if ($user.PSObject.Properties["maxAgeDays"]) { $user.PSObject.Properties.Remove("maxAgeDays"); $added += "(maxAgeDays entfernt)" }
     if ($added) { $user | ConvertTo-Json -Depth 5 | Set-Content $env:CFG_USER -Encoding utf8
                   Write-Host "Ergänzt: $($added -join ", ")" }
   '

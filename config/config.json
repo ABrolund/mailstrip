@@ -1,11 +1,35 @@
 {
-  "customerDomains": ["philips.com", "volkswagen.de", "cariad.technology", "audi.de"],
-  "internalDomains": ["cerence.com"],
-  "managementTitlePatterns": ["\\bDirector\\b", "\\bVP\\b", "Vice President", "\\bSVP\\b", "\\bEVP\\b",
-                              "\\bHead of\\b", "\\bChief\\b", "\\bC[ETOIF]O\\b", "Bereichsleit", "Direktor"],
+  "customerDomains": [
+    "philips.com",
+    "volkswagen.de",
+    "cariad.technology",
+    "audi.de"
+  ],
+  "internalDomains": [
+    "cerence.com"
+  ],
+  "managementTitlePatterns": [
+    "\\bDirector\\b",
+    "\\bVP\\b",
+    "Vice President",
+    "\\bSVP\\b",
+    "\\bEVP\\b",
+    "\\bHead of\\b",
+    "\\bChief\\b",
+    "\\bC[ETOIF]O\\b",
+    "Bereichsleit",
+    "Direktor"
+  ],
   "extraManagementAddresses": [],
   "intervalSeconds": 60,
-  "maxAgeDays": 7,
+  "lookbackHours": 24,
+  "workDays": [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday"
+  ],
   "managerListRefreshDays": 7,
   "managerChainMaxLevels": 10
 }

@@ -67,6 +67,30 @@ function Find-Domain([string]$Domain, $List) {
     $List | Where-Object { $Domain -eq $_ -or $Domain.EndsWith(".$_") } | Select-Object -First 1
 }
 
+# --- Arbeitstage -------------------------------------------------------------
+# Ist $Date ein Arbeitstag laut config.json (workDays, englische Tagesnamen)?
+function Test-WorkDay($Config, [datetime]$Date) {
+    return @($Config.workDays) -contains $Date.DayOfWeek.ToString()
+}
+
+# Beginn des Prüfzeitraums: lookbackHours ARBEITS-Stunden zurück.
+# Stunden an freien Tagen werden übersprungen. Beispiel bei 24 h:
+#   Dienstag 09:00 -> Montag 09:00
+#   Montag   09:00 -> Freitag 09:00 (Wochenende zählt nicht)
+# Mails, die am Wochenende kamen, liegen damit am Montag im Zeitraum.
+function Get-LookbackStart($Config) {
+    $since = Get-Date
+    $left  = [int]$Config.lookbackHours
+    # Schutz: höchstens 14 Tage zurück, falls workDays leer/falsch ist.
+    $limit = (Get-Date).AddDays(-14)
+    while ($left -gt 0 -and $since -gt $limit) {
+        $since = $since.AddHours(-1)
+        # Nur Stunden an Arbeitstagen verbrauchen das Kontingent.
+        if (Test-WorkDay $Config $since) { $left-- }
+    }
+    return $since
+}
+
 # --- Anmeldung bei Microsoft Graph ------------------------------------------
 # -ContextScope CurrentUser speichert das Token im Benutzer-Cache, damit es
 # nach einem Neustart wiederverwendet werden kann. Ist das Token gültig, kehrt

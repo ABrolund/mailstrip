@@ -11,6 +11,7 @@ Ein langsam pulsierender Farbstreifen am oberen Bildschirmrand (macOS). Er ersch
 
 - **Mehrere Kategorien gleichzeitig:** Die Farben wechseln nacheinander, ein Puls je Farbe (z. B. rot → gelb → grün → rot …).
 - **Geschwindigkeit:** immer langsam (3 s pro Puls).
+- **Zeitraum:** nur Mails der letzten 24 Arbeitsstunden; am Wochenende wird nicht geprüft.
 - **Ende des Alarms:** Mail lesen (spätestens nach 60 s weg) **oder** im Menü quittieren.
 
 ## Menüleiste
@@ -80,7 +81,8 @@ Datei: `~/Library/Application Support/MailStrip/config.json`. Änderungen wirken
 | `managementTitlePatterns` | Regex-Muster für Jobtitel, die rot werden (in JSON `\\b` statt `\b`). |
 | `extraManagementAddresses` | Zusätzliche Adressen, die immer rot sind. |
 | `intervalSeconds` | Prüfintervall (Standard 60). |
-| `maxAgeDays` | Nur ungelesene Mails der letzten N Tage zählen (Standard 7). |
+| `lookbackHours` | Nur ungelesene Mails der letzten N **Arbeitsstunden** zählen (Standard 24). Wochenenden werden übersprungen: Montag 9:00 prüft ab Freitag 9:00. |
+| `workDays` | Tage, an denen geprüft wird (englische Namen, Standard Mo–Fr). An anderen Tagen gibt es keinen Balken. |
 | `managerListRefreshDays` | Managerliste wird nach N Tagen neu geladen (Standard 7). |
 | `managerChainMaxLevels` | Maximale Ebenen nach oben in deiner Linie. |
 
@@ -105,12 +107,13 @@ Datei: `~/Library/Application Support/MailStrip/config.json`. Änderungen wirken
 - **`Write-StripStatus`**: schreibt `state.json` atomar (tmp-Datei + Umbenennen).
 - **`Connect-MailStrip`**: Anmeldung mit `Mail.Read` und `User.Read.All`. Das Token wird im Benutzer-Cache gespeichert (`-ContextScope CurrentUser`).
 - **`Update-ManagerList`**: holt deine Kette nach oben (Abbruch an der Spitze, weil der CEO sein eigener Manager ist) und alle internen Konten mit passendem Jobtitel. Speichert alles in `management.json`.
+- **`Test-WorkDay` / `Get-LookbackStart`**: Arbeitstag prüfen und Beginn des Prüfzeitraums berechnen (Stunden an freien Tagen zählen nicht).
 - **`Read-ManagerList`**: liefert den Line Manager und ein Wörterbuch *Adresse → Grund* für Rot.
 
 ### Checker (`scripts/MailStrip-Checker.ps1`)
 
-- **`Get-InboxItems`**: lädt ungelesene Mails der letzten `maxAgeDays` Tage (nur `id`, `from`, `subject`, `receivedDateTime`, `webLink`) und ordnet jede einer Kategorie mit Grund zu. Nicht relevante Mails werden verworfen.
-- **Hauptschleife**: anmelden → Managerliste ggf. aktualisieren → prüfen → `state.json` → 60 s warten. Bei Änderungen wird jeder Treffer mit Grund geloggt. Kurzzeitige Fehler lassen den letzten Stand stehen.
+- **`Get-InboxItems`**: lädt ungelesene Mails der letzten 24 Arbeitsstunden (`Get-LookbackStart`) (nur `id`, `from`, `subject`, `receivedDateTime`, `webLink`) und ordnet jede einer Kategorie mit Grund zu. Nicht relevante Mails werden verworfen.
+- **Hauptschleife**: an freien Tagen leere Liste schreiben und pausieren, sonst anmelden → Managerliste ggf. aktualisieren → prüfen → `state.json` → 60 s warten. Bei Änderungen wird jeder Treffer mit Grund geloggt. Kurzzeitige Fehler lassen den letzten Stand stehen.
 
 ### Autostart (`install.sh`)
 

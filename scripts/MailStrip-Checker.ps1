@@ -5,7 +5,8 @@
 # Pro Durchlauf:
 #   1. bei Bedarf bei Microsoft Graph anmelden
 #   2. einmal pro Woche die Managerliste aktualisieren
-#   3. ungelesene Mails im Posteingang (der letzten maxAgeDays Tage) prüfen
+#   3. nur an Arbeitstagen: ungelesene Mails der letzten 24 Arbeitsstunden
+#      prüfen (am Wochenende kein Balken)
 #   4. alle auslösenden Mails mit Grund in state.json schreiben
 #      -> die Swift-App zeigt Balken + Liste; leer = kein Balken
 #   5. intervalSeconds warten (Standard 60 s)
@@ -20,9 +21,10 @@ function Get-InboxItems($Config, $Managers) {
     # Angemeldetes Konto = eigenes Postfach.
     $user = (Get-MgContext).Account
 
-    # Nur aktuelle ungelesene Mails. Alte ungelesene Mails (z. B. Newsletter
-    # eines Directors von vor Monaten) lösen sonst dauerhaft Alarm aus.
-    $since  = ConvertTo-IsoUtc ((Get-Date).AddDays(-[int]$Config.maxAgeDays))
+    # Nur aktuelle ungelesene Mails (lookbackHours Arbeitsstunden, Standard 24).
+    # Ältere ungelesene Mails (z. B. Newsletter von vor Wochen) lösen sonst
+    # dauerhaft Alarm aus. Wochenenden werden übersprungen.
+    $since  = ConvertTo-IsoUtc (Get-LookbackStart $Config)
     $filter = "isRead eq false and receivedDateTime ge $since"
     # Nur benötigte Felder laden – schnell und datensparsam.
     $msgs = Get-MgUserMailFolderMessage -UserId $user -MailFolderId 'inbox' -Filter $filter -Top 100 `
@@ -80,6 +82,15 @@ while ($true) {
         if (-not $connected) {
             Write-StripStatus 'auth' @() 'Anmeldung läuft'
             $connected = Connect-MailStrip
+        }
+
+        # An freien Tagen (Standard: Sa/So) nicht prüfen -> kein Balken.
+        # Status "ok" mit leerer Liste, damit die App nicht "veraltet" meldet.
+        if (-not (Test-WorkDay $config (Get-Date))) {
+            Write-StripStatus 'ok' @() 'Kein Arbeitstag'
+            if ($lastSig -ne 'off') { Write-Log 'Kein Arbeitstag – Prüfung pausiert.'; $lastSig = 'off' }
+            Start-Sleep -Seconds $config.intervalSeconds
+            continue
         }
 
         # 2. Managerliste wöchentlich (oder auf Anforderung aus dem Menü)
